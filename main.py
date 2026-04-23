@@ -1,57 +1,3 @@
-"""
-================================================================================
-  DTSC303 — BIG DATA COMPUTING
-  Elliptic++ Bitcoin Fraud Detection Pipeline
-  Using Apache Spark + MapReduce on AWS EMR
-
-  Dataset: Elliptic++ (Georgia Tech / ACM SIGKDD 2023)
-
-  Data location (S3):
-    s3://my-flame-emr-bucket/cryptocurrency team/trial2/
-
-  How to run on EMR (after SSH):
-    spark-submit \
-      --master yarn \
-      --deploy-mode client \
-      --num-executors 2 \
-      --executor-cores 2 \
-      --executor-memory 4g \
-      --driver-memory 4g \
-      --conf spark.sql.shuffle.partitions=16 \
-      main.py
-
-  Problem Statements:
-    PS-1 : Class distribution & temporal analysis      (MapReduce RDD)
-    PS-2 : Transaction graph degree & hub detection    (MapReduce RDD)
-    PS-3 : Wallet actor network analysis               (Spark SQL + joins)
-    PS-4 : Fraud detection — Random Forest             (Spark MLlib)
-    PS-5 : Temporal fraud propagation                  (Window functions)
-    PS-6 : YARN performance profiling                  (metrics + config)
-================================================================================
-"""
-"""
-================================================================================
-  DTSC303 — BIG DATA COMPUTING
-  Elliptic++ Bitcoin Fraud Detection Pipeline
-  Apache Spark + MapReduce on AWS EMR
-
-  Outputs  (all single files, no splits):
-    CSV tables  → s3://my-flame-emr-bucket/cryptocurrency team/trial2/output/csv/
-    PNG charts  → s3://my-flame-emr-bucket/cryptocurrency team/trial2/output/charts/
-
-  How to run on EMR:
-    spark-submit \
-      --master yarn \
-      --deploy-mode client \
-      --num-executors 2 \
-      --executor-cores 2 \
-      --executor-memory 4g \
-      --driver-memory 4g \
-      main.py
-================================================================================
-"""
-
-# ── Install dependencies before any pyspark.ml import ─────────────────────────
 import subprocess, sys
 
 for pkg in ["numpy", "matplotlib", "seaborn"]:
@@ -60,7 +6,7 @@ for pkg in ["numpy", "matplotlib", "seaborn"]:
     except ImportError:
         subprocess.check_call([sys.executable, "-m", "pip", "install", pkg, "-q"])
 
-# ── Imports ────────────────────────────────────────────────────────────────────
+# ── Imports ─────
 import time, io, os
 import boto3
 import numpy as np
@@ -90,9 +36,7 @@ from pyspark.ml import Pipeline
 from pyspark.ml.classification import RandomForestClassifier
 from pyspark.ml import Pipeline
 
-# ══════════════════════════════════════════════════════════════════════════════
 # CONFIGURATION
-# ══════════════════════════════════════════════════════════════════════════════
 S3_BUCKET   = "my-flame-emr-bucket"
 S3_PREFIX   = "cryptocurrency team/trial2"
 S3_BASE     = f"s3://{S3_BUCKET}/{S3_PREFIX}"
@@ -112,7 +56,6 @@ UNKNOWN      = 3
 TRAIN_CUTOFF = 34
 SEP          = "=" * 72
 
-# Colour palette matching Elliptic++ paper style
 C_ILLICIT = "#E53935"
 C_LICIT   = "#43A047"
 C_UNKNOWN = "#FFA726"
@@ -127,7 +70,6 @@ plt.rcParams.update({"font.size": 11, "figure.dpi": 150})
 # HELPERS
 # ══════════════════════════════════════════════════════════════════════════════
 def save_fig(fig, filename):
-    """Upload a matplotlib figure as PNG to S3."""
     key = f"{S3_PREFIX}/output/charts/{filename}"
     buf = io.BytesIO()
     fig.savefig(buf, format="png", bbox_inches="tight")
@@ -138,7 +80,6 @@ def save_fig(fig, filename):
 
 
 def save_csv(data, filename):
-    """Upload a pandas DataFrame or dict as a single CSV to S3."""
     import pandas as pd
     if isinstance(data, dict):
         data = pd.DataFrame([data])
@@ -153,7 +94,6 @@ def save_csv(data, filename):
 
 
 def spark_to_csv(df, filename):
-    """Collect a small Spark DF to driver, save as single CSV to S3."""
     pdf = df.toPandas()
     save_csv(pdf, filename)
     return pdf
@@ -174,7 +114,7 @@ def create_spark_session():
     spark.sparkContext.setLogLevel("WARN")
     sc = spark.sparkContext
     print(SEP)
-    print("  Elliptic++ Fraud Detection — DTSC303 Big Data Computing")
+    print("DTSC303 Big Data Computing")
     print(SEP)
     print(f"  App ID  : {sc.applicationId}")
     print(f"  Master  : {sc.master}")
@@ -219,11 +159,6 @@ def load_data(spark):
     dfs["tx_addr"] = spark.read.csv(
         TXADDR_PATH, header=True, inferSchema=True
     )
-
-    # ─────────────────────────────────────────
-    # OPTIONAL / EXTRA FILES
-    # ─────────────────────────────────────────
-
     try:
         dfs["txaddr_edgelist"] = spark.read.csv(
             DATA_PATH + "TxAddr_edgelist.csv",
@@ -269,10 +204,6 @@ def load_data(spark):
     except:
         print("  txs_features.csv missing")
 
-    # ─────────────────────────────────────────
-    # SCHEMA PRINT (THIS IS YOUR ORIGINAL ASK)
-    # ─────────────────────────────────────────
-
     print("\n" + "="*72)
     print("SCHEMA CHECK — ALL DATASETS")
     print("="*72)
@@ -284,10 +215,6 @@ def load_data(spark):
             print("Columns:", df.columns)
             df.printSchema()
             print("-"*50)
-
-    # ─────────────────────────────────────────
-    # ROW COUNT SUMMARY
-    # ─────────────────────────────────────────
 
     print("\n  File                           Rows")
     print("  ────────────────────────────────────")
@@ -306,7 +233,7 @@ def load_data(spark):
             print("Schema:")
             df.printSchema()
             print("-"*50)
-    # txs_features is optional (700 MB — download from Google Drive)
+    
     has_features = False
     dfs["txs_features"] = None
     try:
@@ -332,14 +259,14 @@ def load_data(spark):
     return dfs, has_features
 
 # ══════════════════════════════════════════════════════════════════════════════
-# NEW: STAGE 1.5 — EXPLORATORY DATA ANALYSIS (EDA)
+# STAGE 1.5 — EXPLORATORY DATA ANALYSIS (EDA)
 # ══════════════════════════════════════════════════════════════════════════════
 def stage_eda(spark, dfs, has_features):
     print(f"\n{'─'*72}\n  STAGE 1.5 — Exploratory Data Analysis (EDA)\n{'─'*72}")
     t0 = time.time()
     import pandas as pd
 
-    # --- A. Missing Value Analysis ---
+    # --- A. Missing Values ---
     print("  [EDA A] Checking for Null Values...")
     null_report = []
     for name, df in dfs.items():
@@ -356,13 +283,12 @@ def stage_eda(spark, dfs, has_features):
     # --- B. Feature Statistics (Local vs Aggregate) ---
     if has_features:
         print("  [EDA B] Generating Statistical Summary for Features...")
-        # We select a subset of columns (first 10 features) for a quick look
-        # Columns 2-10 are typically 'local' features in Elliptic
+    
         subset_cols = dfs["txs_features"].columns[1:11] 
         stats_df = dfs["txs_features"].select(subset_cols).summary("count", "min", "25%", "50%", "75%", "max", "mean", "stddev")
         stats_pdf = spark_to_csv(stats_df, "eda_02_feature_stats.csv")
 
-        # Plot 18: Feature Distributions (Boxplot)
+        # Feature Distributions 
         feat_sample = dfs["txs_features"].select(subset_cols).limit(10000).toPandas()
         fig, ax = plt.subplots(figsize=(12, 6))
         sns.boxplot(data=feat_sample, orient="h", palette="Set2")
@@ -378,7 +304,7 @@ def stage_eda(spark, dfs, has_features):
         corr_sample = dfs["txs_features"].select(corr_cols).limit(5000).toPandas()
         corr_matrix = corr_sample.corr()
 
-        # Plot 19: Correlation Heatmap
+        # Correlation Heatmap
         fig, ax = plt.subplots(figsize=(10, 8))
         sns.heatmap(corr_matrix, annot=False, cmap="coolwarm", center=0, linewidths=0.1)
         ax.set_title("Feature Correlation Heatmap (Subset of 15 features)", fontweight="bold")
@@ -423,7 +349,6 @@ def stage_class_distribution(spark, dfs):
     print(f"  [Job B] Wallets:       illicit={wl_d.get('illicit',0):,}  licit={wl_d.get('licit',0):,}")
     print(f"  [Job C] Illicit rate: {ill/(ill+lic)*100:.2f}%   Licit:Illicit = {lic/max(ill,1):.1f}:1")
 
-    # Save CSV
     cats = ["illicit","licit","unknown"]
     summary = pd.DataFrame({
         "class": cats,
@@ -434,7 +359,7 @@ def stage_class_distribution(spark, dfs):
     })
     save_csv(summary, "01_class_distribution.csv")
 
-    # Chart 1 — Dual pie chart
+    #pie chart
     fig, axes = plt.subplots(1, 2, figsize=(14, 5))
     fig.suptitle("Elliptic++ Dataset — Class Distribution", fontsize=14, fontweight="bold")
     colors = [C_ILLICIT, C_LICIT, C_UNKNOWN]
@@ -453,7 +378,7 @@ def stage_class_distribution(spark, dfs):
     plt.tight_layout()
     save_fig(fig, "01_class_distribution_pie.png")
 
-    # Chart 2 — Grouped bar
+    # Grouped bar
     x  = np.arange(3)
     w  = 0.35
     fig, ax = plt.subplots(figsize=(10, 5))
@@ -509,7 +434,7 @@ def stage_graph_degree(spark, dfs):
     hubs_pdf = pd.DataFrame(labelled_hubs, columns=["txId","degree","label"])
     save_csv(hubs_pdf, "02_top20_hub_nodes.csv")
 
-    # Chart 3 — Horizontal bar, coloured by class
+    # Horizontal bar, coloured by class
     fig, ax = plt.subplots(figsize=(13, 6))
     ids    = [str(r[0])[-10:] for r in labelled_hubs]
     degs   = [r[1] for r in labelled_hubs]
@@ -528,7 +453,7 @@ def stage_graph_degree(spark, dfs):
     plt.tight_layout()
     save_fig(fig, "03_top_hubs_degree.png")
 
-    # Chart 4 — Degree distribution histogram (sampled)
+    # Degree distribution histogram (sampled)
     sample = total_deg.map(lambda x: float(x[1])).takeSample(False, 50000, seed=42)
     fig, ax = plt.subplots(figsize=(10, 5))
     ax.hist(sample, bins=60, color=C_BLUE, edgecolor="white", linewidth=0.4, log=True)
@@ -589,7 +514,7 @@ def stage_wallet_network(spark, dfs):
         GROUP BY e.input_address, e.output_address ORDER BY transfers DESC LIMIT 15
     """).show(truncate=True)
 
-    # Chart 5 — Edge flow heatmap
+    # Edge flow heatmap
     pivot = flow_pdf.pivot(index="from_class", columns="to_class", values="edge_count").fillna(0)
     fig, ax = plt.subplots(figsize=(7, 5))
     sns.heatmap(pivot, annot=True, fmt=".0f", cmap="YlOrRd",
@@ -601,7 +526,7 @@ def stage_wallet_network(spark, dfs):
     plt.tight_layout()
     save_fig(fig, "05_edge_flow_heatmap.png")
 
-    # Chart 6 — Top illicit wallets out-degree
+    #Top illicit wallets out-degree
     fig, ax = plt.subplots(figsize=(11, 5))
     short   = [a[-12:]+"…" for a in top_ill_pdf["input_address"]]
     ax.barh(short[::-1], top_ill_pdf["out_degree"][::-1].values,
@@ -663,7 +588,7 @@ def stage_temporal_analysis(spark, dfs):
     time_pdf = spark_to_csv(enriched, "06_temporal_fraud_distribution.csv")
     steps    = time_pdf["time_step"].tolist()
 
-    # Chart 7 — Stacked bar per time step (matches Image 1)
+    # Stacked bar per time step
     fig, ax = plt.subplots(figsize=(16, 5))
     ax.bar(steps, time_pdf["unknown"], color=C_UNKNOWN, label="Unknown (unlabelled)")
     ax.bar(steps, time_pdf["licit"],   color=C_LICIT,   label="Licit (non-fraud)",
@@ -679,7 +604,7 @@ def stage_temporal_analysis(spark, dfs):
     plt.tight_layout()
     save_fig(fig, "07_stacked_bar_per_timestep.png")
 
-    # Chart 8 — Line chart with rolling avg and train/test split line
+    #Line chart with rolling avg and train/test split line
     fig, ax = plt.subplots(figsize=(14, 5))
     ax.fill_between(steps, time_pdf["illicit"], alpha=0.2, color=C_ILLICIT)
     ax.plot(steps, time_pdf["illicit"],     color=C_ILLICIT, lw=2, label="Illicit count")
@@ -696,7 +621,7 @@ def stage_temporal_analysis(spark, dfs):
     plt.tight_layout()
     save_fig(fig, "08_temporal_trends_line.png")
 
-    # Chart 9 — Cumulative illicit rate
+    #Cumulative illicit rate
     fig, ax = plt.subplots(figsize=(12, 4))
     ax.plot(steps, time_pdf["illicit_rate_pct"], color=C_PURPLE, lw=2)
     ax.fill_between(steps, time_pdf["illicit_rate_pct"], alpha=0.15, color=C_PURPLE)
@@ -725,7 +650,7 @@ def stage_temporal_analysis(spark, dfs):
         nb.filter(F.col("c1")==1).orderBy(F.desc("illicit_nb_ratio")).limit(500),
         "07_fraud_propagation_neighbour_ratio.csv")
 
-    # Chart 10 — Fraud propagation histogram
+    # Fraud propagation histogram
     if len(nb_pdf) > 0:
         fig, ax = plt.subplots(figsize=(10, 5))
         ax.hist(nb_pdf["illicit_nb_ratio"], bins=30, color=C_ILLICIT,
@@ -841,7 +766,7 @@ def stage_ml_fraud(spark, dfs, has_features):
              .option("header","true") \
              .csv(f"{OUTPUT_BASE}/csv/predictions_{safe}")
 
-    # Chart 11 — Model comparison bar
+    # Model comparison bar
     metrics = ["acc","f1","auc","prec","rec"]
     mlabels = ["Accuracy","F1","AUC-PR","Precision","Recall"]
     x, w   = np.arange(len(metrics)), 0.3
@@ -859,7 +784,7 @@ def stage_ml_fraud(spark, dfs, has_features):
     plt.tight_layout()
     save_fig(fig, "11_model_comparison.png")
 
-    # Chart 12 — Confusion matrices
+    # Confusion matrices
     fig, axes = plt.subplots(1, 2, figsize=(12, 5))
     for ax, (mname, r) in zip(axes, all_results.items()):
         cm = np.array([[r["tn"],r["fp"]],[r["fn"],r["tp"]]])
@@ -872,7 +797,7 @@ def stage_ml_fraud(spark, dfs, has_features):
     plt.tight_layout()
     save_fig(fig, "12_confusion_matrices.png")
 
-    # Chart 13 — Feature importances (top 20)
+    #Feature importances
     if rf_importances:
         top20  = rf_importances[:20]
         fnames = [f[0] for f in top20]
@@ -1028,7 +953,7 @@ def stage_wallet_clustering(spark, dfs):
     cnames = [f"Cluster {i}" for i in prof_pdf["prediction"]]
     ccolors = [C_BLUE, C_LICIT, C_UNKNOWN, C_PURPLE]
 
-    # Chart 14 — Cluster profiles grouped bar
+    # Cluster profiles grouped bar
     metrics = ["avg_out_deg","avg_in_deg","avg_txs_sent","avg_txs_rcvd"]
     mlabels = ["Avg Out-Deg","Avg In-Deg","Avg Txs Sent","Avg Txs Rcvd"]
     x, w    = np.arange(len(metrics)), 0.2
@@ -1042,7 +967,7 @@ def stage_wallet_clustering(spark, dfs):
     ax.legend(); plt.tight_layout()
     save_fig(fig, "14_wallet_cluster_profiles.png")
 
-    # Chart 15 — Illicit vs licit per cluster
+    # Illicit vs licit per cluster
     x, w = np.arange(len(cnames)), 0.3
     fig, ax = plt.subplots(figsize=(9, 5))
     ax.bar(x-w/2, prof_pdf["illicit_count"].values, w, label="Illicit", color=C_ILLICIT, alpha=0.85)
@@ -1116,7 +1041,7 @@ def stage_case_analysis(spark, dfs):
     summary.show()
     sum_pdf = spark_to_csv(summary, "11_case_analysis_summary.csv")
 
-    # Chart 16 — Case analysis pie + bar
+    #Case analysis pie + bar
     case_colors = {"EASY":C_LICIT,"HARD":C_ILLICIT,"AVERAGE":C_UNKNOWN}
     fig, axes   = plt.subplots(1, 2, figsize=(13, 5))
     fig.suptitle("Fraud Case Analysis — Easy / Hard / Average", fontweight="bold", fontsize=13)
